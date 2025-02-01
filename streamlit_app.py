@@ -9,14 +9,23 @@ import time
 from cryptography.fernet import Fernet
 import os
 from dotenv import load_dotenv
+import sys
 
 # Load local .env file if present (for local testing)
 load_dotenv()
 
+# ----------------------------------
+# Helper Rerun Function (No experimental)
+# ----------------------------------
+def rerun():
+    # Instead of using st.experimental_rerun, we exit the script.
+    # Streamlit will rerun the script on the next user interaction.
+    sys.exit()
+
+
 # ===========================
 # 1. Security Management
 # ===========================
-
 class SecurityManager:
     def __init__(self):
         # Get SECRET_KEY from env/secrets or generate a new one
@@ -118,7 +127,6 @@ security = SecurityManager()
 # ===========================
 # 2. LinkedIn Cookie Management
 # ===========================
-
 def setup_chromedriver():
     try:
         from webdriver_manager.chrome import ChromeDriverManager
@@ -143,7 +151,7 @@ def get_linkedin_cookies() -> Optional[str]:
         options.add_argument("--headless=new")
         options.add_argument("--no-sandbox")
         options.add_argument("--disable-dev-shm-usage")
-        # Optionally use a custom binary location (if provided)
+        # Optionally use a custom binary location if provided
         brave_binary = os.getenv("BRAVE_BINARY")
         if brave_binary:
             options.binary_location = brave_binary
@@ -157,7 +165,7 @@ def get_linkedin_cookies() -> Optional[str]:
         driver.get("https://www.linkedin.com/sales")
         
         try:
-            # Wait for a general element to indicate the page has loaded
+            # Wait for an element on the page to load
             WebDriverWait(driver, 30).until(
                 EC.presence_of_element_located((By.TAG_NAME, "body"))
             )
@@ -195,7 +203,6 @@ def get_linkedin_cookies() -> Optional[str]:
 # ===========================
 # 3. Webhook Integration
 # ===========================
-
 def generate_session_id() -> str:
     return str(uuid.uuid4())
 
@@ -263,7 +270,6 @@ def trigger_heyreach_campaign(session_id: str, email: str) -> Optional[Dict]:
 # ===========================
 # 4. Apify Integration
 # ===========================
-
 class ApifyLogManager:
     def __init__(self):
         self.APIFY_API_TOKEN = st.secrets.get("APIFY_API_TOKEN")
@@ -359,7 +365,6 @@ def process_webhook_response(response: Dict) -> str:
 # ===========================
 # 5. Main Application
 # ===========================
-
 def main():
     st.set_page_config(
         page_title="LinkedIn Sales Navigator Scraper",
@@ -388,7 +393,7 @@ def main():
             for key in list(st.session_state.keys()):
                 del st.session_state[key]
             st.warning("Session expired due to inactivity. Please log in again.")
-            st.experimental_rerun()
+            rerun()  # Force exit so that Streamlit reruns on next interaction
         st.session_state.last_activity = time.time()
 
     # Authentication Check
@@ -411,7 +416,7 @@ def main():
                         "last_activity": time.time()
                     })
                     st.success("Login successful!")
-                    st.experimental_rerun()
+                    rerun()  # Exit so that the updated session state is used on the next run
                 else:
                     st.error(message)
         return
@@ -420,7 +425,7 @@ def main():
     if st.sidebar.button("Logout"):
         for key in list(st.session_state.keys()):
             del st.session_state[key]
-        st.experimental_rerun()
+        rerun()  # Exit so that Streamlit resets the session state
         return
 
     # Main Interface
@@ -438,7 +443,7 @@ def main():
                     if cookies:
                         st.session_state.cookie_json = cookies
                         st.success("✅ Successfully connected to LinkedIn Sales Navigator!")
-                        st.experimental_rerun()
+                        rerun()
                     else:
                         st.error("❌ Connection failed. Make sure you are logged into LinkedIn.")
         else:
@@ -449,7 +454,7 @@ def main():
                     if cookies:
                         st.session_state.cookie_json = cookies
                         st.success("✅ Successfully reconnected!")
-                        st.experimental_rerun()
+                        rerun()
                     else:
                         st.error("❌ Reconnection failed.")
 
