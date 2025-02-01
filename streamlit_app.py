@@ -2,7 +2,7 @@ import streamlit as st
 import json
 import requests
 import uuid
-from datetime import datetime, timezone
+from datetime import datetime
 from typing import Optional, Dict, List
 import hashlib
 import time
@@ -10,27 +10,42 @@ from cryptography.fernet import Fernet
 import os
 from dotenv import load_dotenv
 
-# ---------------------------
-# 1. Security Management
-# ---------------------------
+# Load local .env file if present (for local testing)
 load_dotenv()
+
+# ===========================
+# 1. Security Management
+# ===========================
 
 class SecurityManager:
     def __init__(self):
-        self.SECRET_KEY = os.getenv('SECRET_KEY', Fernet.generate_key())
+        # Get SECRET_KEY from env/secrets or generate a new one
+        secret_key = os.getenv('SECRET_KEY') or st.secrets.get("SECRET_KEY")
+        if not secret_key:
+            secret_key = Fernet.generate_key()
+        else:
+            # If provided as string, encode to bytes
+            if isinstance(secret_key, str):
+                secret_key = secret_key.encode()
+        self.SECRET_KEY = secret_key
         self.cipher_suite = Fernet(self.SECRET_KEY)
+
+        # Get user credentials from env/secrets
+        admin_username = os.getenv('ADMIN_USERNAME') or st.secrets.get("ADMIN_USERNAME", "admin")
+        admin_password = os.getenv('ADMIN_PASSWORD') or st.secrets.get("ADMIN_PASSWORD", "Unicorn2025")
+        user_username = os.getenv('USER_USERNAME') or st.secrets.get("USER_USERNAME", "user")
+        user_password = os.getenv('USER_PASSWORD') or st.secrets.get("USER_PASSWORD", "Unicorn2025")
         
-        # Load credentials from .env
         self.users = {
-            os.getenv('ADMIN_USERNAME', 'admin'): {
-                "password_hash": self._hash_password(os.getenv('ADMIN_PASSWORD', 'Unicorn2025')),
+            admin_username: {
+                "password_hash": self._hash_password(admin_password),
                 "role": "admin",
                 "attempts": 0,
                 "last_attempt": 0,
                 "last_login": None
             },
-            os.getenv('USER_USERNAME', 'user'): {
-                "password_hash": self._hash_password(os.getenv('USER_PASSWORD', 'Unicorn2025')),
+            user_username: {
+                "password_hash": self._hash_password(user_password),
                 "role": "user",
                 "attempts": 0,
                 "last_attempt": 0,
@@ -38,16 +53,17 @@ class SecurityManager:
             }
         }
         
-        # Load security settings
-        self.MAX_ATTEMPTS = int(os.getenv('MAX_ATTEMPTS', 3))
-        self.LOCKOUT_TIME = int(os.getenv('LOCKOUT_TIME', 300))
-        self.SESSION_DURATION = int(os.getenv('SESSION_DURATION', 86400))
+        # Security settings
+        self.MAX_ATTEMPTS = int(os.getenv('MAX_ATTEMPTS', st.secrets.get("MAX_ATTEMPTS", 3)))
+        self.LOCKOUT_TIME = int(os.getenv('LOCKOUT_TIME', st.secrets.get("LOCKOUT_TIME", 300)))
+        self.SESSION_DURATION = int(os.getenv('SESSION_DURATION', st.secrets.get("SESSION_DURATION", 86400)))
 
     def _hash_password(self, password: str) -> str:
         if not password or len(password) < 8:
             raise ValueError("Password must be at least 8 characters long")
-            
-        salt = os.getenv('SALT', b"fixed_salt_for_demo").encode()
+        # Use a string as the default salt, then encode it
+        salt = os.getenv('SALT') or st.secrets.get("SALT", "fixed_salt_for_demo")
+        salt = salt.encode('utf-8')
         return hashlib.pbkdf2_hmac(
             'sha256', 
             password.encode('utf-8'), 
@@ -97,78 +113,88 @@ class SecurityManager:
         except ValueError as e:
             return False, str(e)
 
-# Initialize security manager
 security = SecurityManager()
 
-# ---------------------------
+# ===========================
 # 2. LinkedIn Cookie Management
-# ---------------------------
+# ===========================
 
 def setup_chromedriver():
     try:
         from webdriver_manager.chrome import ChromeDriverManager
         from selenium.webdriver.chrome.service import Service
-        
-        # Download and install the appropriate ChromeDriver
         driver_path = ChromeDriverManager().install()
         return Service(driver_path)
     except Exception as e:
         st.error(f"❌ Error setting up ChromeDriver: {str(e)}")
         return None
-    
+
 def get_linkedin_cookies() -> Optional[str]:
     try:
-        st.info("Trying to get cookies from Brave...")
+        st.info("Trying to get cookies from LinkedIn Sales Navigator...")
         from selenium import webdriver
         from selenium.webdriver.chrome.options import Options
-        import time
-        
-        # Set up Brave browser options
+        from selenium.webdriver.common.by import By
+        from selenium.webdriver.support.ui import WebDriverWait
+        from selenium.webdriver.support import expected_conditions as EC
+
         options = Options()
-        options.binary_location = "C:\\Program Files\\BraveSoftware\\Brave-Browser\\Application\\brave.exe"
-        
-        # Create driver and get cookies
-        try:
-            driver = webdriver.Chrome(options=options)
-            driver.get("https://www.linkedin.com/sales")
-            time.sleep(30)  # Wait for cookies to load
-            
-            # Get all cookies as array
-            cookies = driver.get_cookies()
-            
-            # Filter LinkedIn cookies and maintain array format
-            linkedin_cookies = [
-                {
-                    'name': cookie['name'],
-                    'value': cookie['value'],
-                    'domain': cookie.get('domain', ''),
-                    'path': cookie.get('path', '/'),
-                    'secure': cookie.get('secure', True),
-                    'httpOnly': cookie.get('httpOnly', True)
-                }
-                for cookie in cookies 
-                if '.linkedin.com' in cookie.get('domain', '')
-            ]
-            
-            driver.quit()
-            
-            if linkedin_cookies:
-                return json.dumps(linkedin_cookies, indent=2)
-            else:
-                st.warning("No LinkedIn cookies found. Please log in to LinkedIn in Brave.")
-                return None
-                
-        except Exception as e:
-            st.error(f"Error with Selenium: {str(e)}")
+        # Run in headless mode (required on Streamlit Cloud)
+        options.add_argument("--headless=new")
+        options.add_argument("--no-sandbox")
+        options.add_argument("--disable-dev-shm-usage")
+        # Optionally use a custom binary location (if provided)
+        brave_binary = os.getenv("BRAVE_BINARY")
+        if brave_binary:
+            options.binary_location = brave_binary
+
+        service = setup_chromedriver()
+        if service is None:
+            st.error("Failed to initialize ChromeDriver.")
             return None
-            
+
+        driver = webdriver.Chrome(service=service, options=options)
+        driver.get("https://www.linkedin.com/sales")
+        
+        try:
+            # Wait for a general element to indicate the page has loaded
+            WebDriverWait(driver, 30).until(
+                EC.presence_of_element_located((By.TAG_NAME, "body"))
+            )
+        except Exception as e:
+            st.error(f"Timeout waiting for LinkedIn page to load: {str(e)}")
+            driver.quit()
+            return None
+        
+        cookies = driver.get_cookies()
+        linkedin_cookies = [
+            {
+                'name': cookie['name'],
+                'value': cookie['value'],
+                'domain': cookie.get('domain', ''),
+                'path': cookie.get('path', '/'),
+                'secure': cookie.get('secure', True),
+                'httpOnly': cookie.get('httpOnly', True)
+            }
+            for cookie in cookies 
+            if '.linkedin.com' in cookie.get('domain', '')
+        ]
+        
+        driver.quit()
+        
+        if linkedin_cookies:
+            return json.dumps(linkedin_cookies, indent=2)
+        else:
+            st.warning("No LinkedIn cookies found. Please log in to LinkedIn in your browser first.")
+            return None
+
     except Exception as e:
         st.error(f"Error retrieving cookies: {str(e)}")
         return None
 
-# ---------------------------
+# ===========================
 # 3. Webhook Integration
-# ---------------------------
+# ===========================
 
 def generate_session_id() -> str:
     return str(uuid.uuid4())
@@ -177,46 +203,35 @@ def validate_url(url: str) -> bool:
     return url.startswith('https://www.linkedin.com/sales/')
 
 def send_to_webhook(data: Dict) -> Optional[Dict]:
-    WEBHOOK_URL = os.getenv('WEBHOOK_URL')
-    BEARER_TOKEN = os.getenv('BEARER_TOKEN')
+    WEBHOOK_URL = os.getenv('WEBHOOK_URL') or st.secrets.get("WEBHOOK_URL")
+    BEARER_TOKEN = os.getenv('BEARER_TOKEN') or st.secrets.get("BEARER_TOKEN")
     
-    # Add metadata for Apify tracking
     metadata = {
         "source": "linkedin_scraper",
         "requestTimestamp": datetime.utcnow().isoformat(),
         "requireApifyLogs": True
     }
     
-    payload = {
-        **data,
-        "metadata": metadata
-    }
-    
+    payload = {**data, "metadata": metadata}
     headers = {
         "Authorization": f"Bearer {BEARER_TOKEN}",
         "Content-Type": "application/json"
     }
     
     try:
-        response = requests.post(
-            WEBHOOK_URL, 
-            json=payload, 
-            headers=headers,
-            timeout=30
-        )
+        response = requests.post(WEBHOOK_URL, json=payload, headers=headers, timeout=30)
         response.raise_for_status()
         return response.json()
-        
     except requests.exceptions.RequestException as e:
-        st.error(f"Error sending request: {str(e)}")
+        st.error(f"Error sending webhook request: {str(e)}")
         return None
     except json.JSONDecodeError as e:
         st.error(f"Error parsing webhook response: {str(e)}")
         return None
 
 def trigger_heyreach_campaign(session_id: str, email: str) -> Optional[Dict]:
-    HEYREACH_WEBHOOK_URL = os.getenv('HEYREACH_WEBHOOK_URL')
-    BEARER_TOKEN = os.getenv('BEARER_TOKEN')
+    HEYREACH_WEBHOOK_URL = os.getenv('HEYREACH_WEBHOOK_URL') or st.secrets.get("HEYREACH_WEBHOOK_URL")
+    BEARER_TOKEN = os.getenv('BEARER_TOKEN') or st.secrets.get("BEARER_TOKEN")
     
     payload = {
         "sessionId": session_id,
@@ -235,49 +250,34 @@ def trigger_heyreach_campaign(session_id: str, email: str) -> Optional[Dict]:
     }
     
     try:
-        response = requests.post(
-            HEYREACH_WEBHOOK_URL,
-            json=payload,
-            headers=headers,
-            timeout=30
-        )
+        response = requests.post(HEYREACH_WEBHOOK_URL, json=payload, headers=headers, timeout=30)
         response.raise_for_status()
         return response.json()
-        
     except requests.exceptions.RequestException as e:
         st.error(f"Error sending Heyreach campaign request: {str(e)}")
         return None
     except json.JSONDecodeError as e:
         st.error(f"Error parsing Heyreach webhook response: {str(e)}")
         return None
-    
-# ---------------------------
+
+# ===========================
 # 4. Apify Integration
-# ---------------------------
+# ===========================
 
 class ApifyLogManager:
     def __init__(self):
-        self.APIFY_API_TOKEN = st.secrets["APIFY_API_TOKEN"]
+        self.APIFY_API_TOKEN = st.secrets.get("APIFY_API_TOKEN")
+        if not self.APIFY_API_TOKEN:
+            st.error("APIFY_API_TOKEN is not configured in st.secrets.")
         
     def get_actor_logs(self, run_id: str) -> Optional[List[Dict]]:
-        """
-        Fetch logs for a specific actor run using http.client
-        
-        Args:
-            run_id (str): The ID of the actor run
-            
-        Returns:
-            Optional[List[Dict]]: List of log entries or None if request fails
-        """
         try:
             import http.client
             conn = http.client.HTTPSConnection("api.apify.com")
-            
             headers = {
                 'Accept': 'text/plain',
                 'Authorization': f'Bearer {self.APIFY_API_TOKEN}'
             }
-            
             conn.request("GET", f"/v2/logs/{run_id}", '', headers)
             response = conn.getresponse()
             
@@ -287,19 +287,15 @@ class ApifyLogManager:
                 
             data = response.read()
             log_text = data.decode("utf-8")
-            
-            # Parse log text into structured format
             log_entries = []
             for line in log_text.split('\n'):
                 if line.strip():
                     try:
-                        # Parse the log line
-                        parts = line.strip().split(' ', 2)  # Split into max 3 parts
+                        parts = line.strip().split(' ', 2)
                         if len(parts) >= 3:
                             timestamp = parts[0]
                             level = parts[1]
                             message = parts[2]
-                            
                             log_entries.append({
                                 "timestamp": timestamp,
                                 "level": level,
@@ -308,86 +304,61 @@ class ApifyLogManager:
                     except Exception as e:
                         st.error(f"Error parsing log line: {str(e)}")
                         continue
-            
             return log_entries
             
         except Exception as e:
             st.error(f"Error fetching Apify logs: {str(e)}")
             return None
-            
         finally:
             if 'conn' in locals():
                 conn.close()
 
 def display_apify_logs(run_id: str):
-    """
-    Display Apify actor logs in the Streamlit UI with console-style formatting
-    
-    Args:
-        run_id (str): The ID of the actor run
-    """
     apify_manager = ApifyLogManager()
-    
     with st.expander("View Apify Logs", expanded=True):
-        # Custom CSS for log display
         st.markdown("""
         <style>
             .log-timestamp { color: #666666; font-family: monospace; }
-            .log-actor { color: #ffffff; font-weight: bold; }
             .log-info { color: #00ff00; font-weight: bold; }
             .log-message { color: #ffffff; font-family: monospace; }
-            .stMarkdown { line-height: 1.2; }
         </style>
         """, unsafe_allow_html=True)
         
         col1, col2 = st.columns([1, 4])
         with col1:
-            if st.button("🔄 Refresh Logs", use_container_width=True):
+            if st.button("🔄 Refresh Logs", key="refresh_logs", use_container_width=True):
                 with st.spinner("Fetching logs..."):
                     logs = apify_manager.get_actor_logs(run_id)
-                    
                     if logs:
-                        # Create a container for logs
-                        log_container = st.container()
-                        
-                        with log_container:
-                            for log in logs:
-                                timestamp = log.get("timestamp", "")
-                                level = log.get("level", "")
-                                message = log.get("message", "")
-                                
-                                # Format the log entry with HTML styling
-                                log_html = f"""
-                                <div style='font-family: monospace; white-space: pre; margin: 2px 0;'>
-                                    <span class='log-timestamp'>{timestamp}</span> 
-                                    <span class='log-{level.lower()}'>{level}</span>: 
-                                    <span class='log-message'>{message}</span>
-                                </div>
-                                """
-                                st.markdown(log_html, unsafe_allow_html=True)
+                        for log in logs:
+                            timestamp = log.get("timestamp", "")
+                            level = log.get("level", "")
+                            message = log.get("message", "")
+                            log_html = f"""
+                            <div style='font-family: monospace; white-space: pre; margin: 2px 0;'>
+                                <span class='log-timestamp'>{timestamp}</span> 
+                                <span class='log-{level.lower()}'>{level}</span>: 
+                                <span class='log-message'>{message}</span>
+                            </div>
+                            """
+                            st.markdown(log_html, unsafe_allow_html=True)
                     else:
                         st.warning("No logs available or error fetching logs")
 
 def process_webhook_response(response: Dict) -> str:
-    """
-    Process webhook response to extract Apify run ID.
-    """
     try:
         run_id = response.get("apifyRunId")
-        
         if not run_id:
             st.warning("No Apify run ID found in webhook response. Log viewing will be unavailable.")
             return ""
-            
         return str(run_id)
-        
     except Exception as e:
         st.error(f"Error processing webhook response: {str(e)}")
         return ""
 
-# ---------------------------
+# ===========================
 # 5. Main Application
-# ---------------------------
+# ===========================
 
 def main():
     st.set_page_config(
@@ -395,8 +366,8 @@ def main():
         page_icon="🔍",
         layout="wide"
     )
-
-    # Initialize session states with better type handling
+    
+    # Initialize session states
     default_states = {
         "logged_in": False,
         "cookie_json": "",
@@ -411,30 +382,26 @@ def main():
         if key not in st.session_state:
             st.session_state[key] = default_value
 
-    # Session timeout check (30 minutes)
+    # Session timeout (30 minutes)
     if st.session_state.logged_in:
-        if time.time() - st.session_state.last_activity > 1800:  # 30 minutes
-            for key in st.session_state.keys():
+        if time.time() - st.session_state.last_activity > 1800:
+            for key in list(st.session_state.keys()):
                 del st.session_state[key]
             st.warning("Session expired due to inactivity. Please log in again.")
-            st.rerun()
+            st.experimental_rerun()
         st.session_state.last_activity = time.time()
 
-    # Authentication Check with improved validation
+    # Authentication Check
     if not st.session_state.get("logged_in"):
         with st.form("login_form"):
             st.subheader("Please Log In")
             username = st.text_input("Username").strip()
             password = st.text_input("Password", type="password")
-            col1, col2 = st.columns([1, 4])
-            with col1:
-                submitted = st.form_submit_button("Login", use_container_width=True)
-            
+            submitted = st.form_submit_button("Login")
             if submitted:
                 if not username or not password:
                     st.error("Please enter both username and password.")
                     return
-                    
                 success, message = security.authenticate(username, password)
                 if success:
                     st.session_state.update({
@@ -444,86 +411,64 @@ def main():
                         "last_activity": time.time()
                     })
                     st.success("Login successful!")
-                    time.sleep(1)
-                    st.rerun()
+                    st.experimental_rerun()
                 else:
                     st.error(message)
         return
 
     # Logout Button
     if st.sidebar.button("Logout"):
-        for key in st.session_state.keys():
+        for key in list(st.session_state.keys()):
             del st.session_state[key]
-        st.rerun()
+        st.experimental_rerun()
         return
 
-    # Main Application Interface
+    # Main Interface
     st.title("LinkedIn Sales Navigator Scraper")
     st.sidebar.info(f"Logged in as: {st.session_state.get('username', 'Unknown')}")
-
+    
     # LinkedIn Account Connection
     st.subheader("LinkedIn Account Connection")
-    
-    # Center the button using columns
     col1, col2, col3 = st.columns([1, 2, 1])
-    
     with col2:
         if not st.session_state.cookie_json:
-            if st.button("Connect to Your LinkedIn Sales Navigator Account", use_container_width=True):
+            if st.button("Connect to Your LinkedIn Sales Navigator Account"):
                 with st.spinner("Connecting to LinkedIn Sales Navigator..."):
                     cookies = get_linkedin_cookies()
                     if cookies:
                         st.session_state.cookie_json = cookies
                         st.success("✅ Successfully connected to LinkedIn Sales Navigator!")
-                        time.sleep(1)
-                        st.rerun()
+                        st.experimental_rerun()
                     else:
-                        st.error("❌ Connection failed. Please make sure you're logged into LinkedIn Sales Navigator in Brave browser.")
+                        st.error("❌ Connection failed. Make sure you are logged into LinkedIn.")
         else:
             st.success("✅ Connected to LinkedIn Sales Navigator")
-            if st.button("Reconnect Account", use_container_width=True):
+            if st.button("Reconnect Account"):
                 with st.spinner("Reconnecting to LinkedIn Sales Navigator..."):
                     cookies = get_linkedin_cookies()
                     if cookies:
                         st.session_state.cookie_json = cookies
-                        st.success("✅ Successfully reconnected to LinkedIn Sales Navigator!")
-                        time.sleep(1)
-                        st.rerun()
+                        st.success("✅ Successfully reconnected!")
+                        st.experimental_rerun()
                     else:
-                        st.error("❌ Reconnection failed. Please make sure you're logged into LinkedIn Sales Navigator in Brave browser.")
+                        st.error("❌ Reconnection failed.")
 
     # Scraper Form
     with st.form("scraper_form"):
-        search_url = st.text_input(
-            "Sales Navigator Search URL",
-            help="Enter your Sales Navigator search URL"
-        ).strip()
-        
+        search_url = st.text_input("Sales Navigator Search URL", help="Enter your Sales Navigator search URL").strip()
         col3, col4 = st.columns(2)
         with col3:
-            num_leads = st.number_input(
-                "Number of Leads",
-                min_value=1,
-                max_value=1000,
-                value=100
-            )
+            num_leads = st.number_input("Number of Leads", min_value=1, max_value=1000, value=100)
         with col4:
-            email = st.text_input(
-                "Email Address",
-                help="Notifications will be sent here"
-            ).strip()
-        
-        submitted = st.form_submit_button("Start Scrape & Enrich", use_container_width=True)
-        
+            email = st.text_input("Email Address", help="Notifications will be sent here").strip()
+        submitted = st.form_submit_button("Start Scrape & Enrich")
         if submitted:
             if not st.session_state.cookie_json:
                 st.error("Please connect to LinkedIn Sales Navigator first.")
                 return
-                
             if not validate_url(search_url):
                 st.error("Please enter a valid LinkedIn Sales Navigator URL.")
                 return
-                
             if not email or '@' not in email:
                 st.error("Please enter a valid email address.")
                 return
@@ -541,20 +486,18 @@ def main():
                 response = send_to_webhook(payload)
                 if response:
                     st.session_state.scraper_logs = response.get("scraperLogs", [])
-                    # Store Apify run ID from webhook response
                     apify_run_id = process_webhook_response(response)
                     if apify_run_id:
                         st.session_state.apify_run_id = apify_run_id
                     st.success("✅ Scraping initiated successfully!")
 
-    # Display Logs
+    # Display Scraper Logs
     if st.session_state.scraper_logs:
         with st.expander("View Scraper Logs", expanded=True):
             for log in st.session_state.scraper_logs:
                 timestamp = log.get("timestamp", "")
                 message = log.get("message", "")
                 level = log.get("level", "info")
-                
                 if level == "error":
                     st.error(f"{timestamp}: {message}")
                 elif level == "warning":
@@ -562,33 +505,27 @@ def main():
                 else:
                     st.info(f"{timestamp}: {message}")
 
-    # Display Apify Logs if run ID is available
+    # Display Apify Logs if available
     if st.session_state.get("apify_run_id"):
         display_apify_logs(st.session_state.apify_run_id)
 
-# Heyreach Campaign Section
+    # Heyreach Campaign Section
     st.subheader("LinkedIn Outreach Campaign")
-    
     with st.form("heyreach_campaign_form"):
-        email = st.text_input(
-            "Campaign Notification Email",
-            value=st.session_state.get('last_email', ''),  # Use previously entered email if available
-            help="Email address for campaign notifications"
-        ).strip()
-        
-        campaign_submitted = st.form_submit_button("Start LinkedIn Outreach Campaign", use_container_width=True)
-        
+        campaign_email = st.text_input("Campaign Notification Email",
+                                       value=st.session_state.get('last_email', ''),
+                                       help="Email address for campaign notifications").strip()
+        campaign_submitted = st.form_submit_button("Start LinkedIn Outreach Campaign")
         if campaign_submitted:
-            if not email or '@' not in email:
+            if not campaign_email or '@' not in campaign_email:
                 st.error("Please enter a valid email address.")
             else:
                 with st.spinner("Initiating Heyreach campaign..."):
-                    session_id = generate_session_id()  # Reuse the existing session ID generator
-                    response = trigger_heyreach_campaign(session_id, email)
-                    
+                    session_id = generate_session_id()
+                    response = trigger_heyreach_campaign(session_id, campaign_email)
                     if response:
                         st.success("✅ Heyreach campaign initiated successfully!")
-                        st.session_state['last_email'] = email  # Store email for future use
+                        st.session_state['last_email'] = campaign_email
                     else:
                         st.error("❌ Failed to initiate Heyreach campaign. Please try again.")
 
