@@ -15,15 +15,6 @@ import shutil
 # Load local .env file if present (for local testing)
 load_dotenv()
 
-# ----------------------------------
-# Helper Rerun Function (No experimental)
-# ----------------------------------
-def rerun():
-    # Instead of using st.experimental_rerun, we exit the script.
-    # Streamlit will rerun the script on the next user interaction.
-    sys.exit()
-
-
 # ===========================
 # 1. Security Management
 # ===========================
@@ -128,19 +119,16 @@ security = SecurityManager()
 # ===========================
 # 2. LinkedIn Cookie Management
 # ===========================
-
 def get_chrome_binary_location():
     """
     Attempts to find the path to the Chrome or Chromium binary.
     Checks environment variables first, then default paths, then uses shutil.which.
     """
-    # 1. Check environment variables
     if os.getenv("BRAVE_BINARY"):
         return os.getenv("BRAVE_BINARY")
     if os.getenv("CHROME_BINARY"):
         return os.getenv("CHROME_BINARY")
     
-    # 2. Check common fixed paths on Linux
     possible_paths = [
         "/usr/bin/google-chrome",
         "/usr/bin/google-chrome-stable",
@@ -151,7 +139,6 @@ def get_chrome_binary_location():
         if os.path.exists(path):
             return path
     
-    # 3. Fallback: search in PATH via shutil.which
     for binary in ["google-chrome", "google-chrome-stable", "chromium-browser", "chromium"]:
         auto_path = shutil.which(binary)
         if auto_path:
@@ -179,14 +166,12 @@ def get_linkedin_cookies() -> Optional[str]:
         from selenium.webdriver.support import expected_conditions as EC
 
         options = Options()
-        # Use headless mode and other arguments recommended for Streamlit Cloud
         options.add_argument("--headless=new")
         options.add_argument("--no-sandbox")
         options.add_argument("--disable-dev-shm-usage")
         options.add_argument("--disable-gpu")
         options.add_argument("--window-size=1920,1080")
         
-        # Determine the binary location using our helper
         binary_location = get_chrome_binary_location()
         if not binary_location:
             st.error("No Chrome or Brave binary found. Please set the BRAVE_BINARY or CHROME_BINARY environment variable.")
@@ -204,7 +189,6 @@ def get_linkedin_cookies() -> Optional[str]:
         driver.get("https://www.linkedin.com/sales")
         
         try:
-            # Wait until the body element is present
             WebDriverWait(driver, 30).until(
                 EC.presence_of_element_located((By.TAG_NAME, "body"))
             )
@@ -421,21 +405,13 @@ def main():
         "last_activity": time.time(),
         "apify_run_id": None
     }
-    
     for key, default_value in default_states.items():
         if key not in st.session_state:
             st.session_state[key] = default_value
 
-    # Session timeout (30 minutes)
-    if st.session_state.logged_in:
-        if time.time() - st.session_state.last_activity > 1800:
-            for key in list(st.session_state.keys()):
-                del st.session_state[key]
-            st.warning("Session expired due to inactivity. Please log in again.")
-            rerun()  # Force exit so that Streamlit reruns on next interaction
-        st.session_state.last_activity = time.time()
-
-    # Authentication Check
+    # ---------------------------
+    # Authentication Section
+    # ---------------------------
     if not st.session_state.get("logged_in"):
         with st.form("login_form"):
             st.subheader("Please Log In")
@@ -445,29 +421,29 @@ def main():
             if submitted:
                 if not username or not password:
                     st.error("Please enter both username and password.")
-                    return
-                success, message = security.authenticate(username, password)
-                if success:
-                    st.session_state.update({
-                        "logged_in": True,
-                        "session_token": message,
-                        "username": username,
-                        "last_activity": time.time()
-                    })
-                    st.success("Login successful!")
-                    rerun()  # Exit so that the updated session state is used on the next run
                 else:
-                    st.error(message)
-        return
+                    success, message = security.authenticate(username, password)
+                    if success:
+                        st.session_state["logged_in"] = True
+                        st.session_state["session_token"] = message
+                        st.session_state["username"] = username
+                        st.session_state["last_activity"] = time.time()
+                        st.success("Login successful!")
+                    else:
+                        st.error(message)
+        # If not logged in, halt further execution.
+        if not st.session_state.get("logged_in"):
+            st.stop()
 
-    # Logout Button
+    # Logout Button (clears session state)
     if st.sidebar.button("Logout"):
         for key in list(st.session_state.keys()):
             del st.session_state[key]
-        rerun()  # Exit so that Streamlit resets the session state
-        return
+        st.stop()
 
+    # ---------------------------
     # Main Interface
+    # ---------------------------
     st.title("LinkedIn Sales Navigator Scraper")
     st.sidebar.info(f"Logged in as: {st.session_state.get('username', 'Unknown')}")
     
@@ -482,7 +458,6 @@ def main():
                     if cookies:
                         st.session_state.cookie_json = cookies
                         st.success("✅ Successfully connected to LinkedIn Sales Navigator!")
-                        rerun()
                     else:
                         st.error("❌ Connection failed. Make sure you are logged into LinkedIn.")
         else:
@@ -493,17 +468,18 @@ def main():
                     if cookies:
                         st.session_state.cookie_json = cookies
                         st.success("✅ Successfully reconnected!")
-                        rerun()
                     else:
                         st.error("❌ Reconnection failed.")
 
-    # ------------------------------------------
-    # Manual Cookie Input Option (Performance Improvement)
-    # ------------------------------------------
+    # Manual Cookie Input Option
     with st.expander("Manual Cookie Input (Optional)", expanded=False):
         st.info("If automatic connection fails or you prefer to paste your cookie data manually, you can do so below. The input is masked for security.")
         with st.form("manual_cookie_form"):
-            manual_cookie_input = st.text_input("Paste your LinkedIn session cookie", type="password", help="Your LinkedIn cookie data (in JSON format) will be masked.")
+            manual_cookie_input = st.text_input(
+                "Paste your LinkedIn session cookie",
+                type="password",
+                help="Your LinkedIn cookie data (in JSON format) will be masked."
+            )
             manual_submit = st.form_submit_button("Submit Cookie")
             if manual_submit:
                 if not manual_cookie_input:
@@ -513,7 +489,6 @@ def main():
                         cookie_data = json.loads(manual_cookie_input)
                         st.session_state.cookie_json = json.dumps(cookie_data, indent=2)
                         st.success("Cookie data stored successfully!")
-                        rerun()
                     except Exception as e:
                         st.error("Invalid cookie data. Please ensure it's a valid JSON string.")
 
@@ -576,9 +551,11 @@ def main():
     # Heyreach Campaign Section
     st.subheader("LinkedIn Outreach Campaign")
     with st.form("heyreach_campaign_form"):
-        campaign_email = st.text_input("Campaign Notification Email",
-                                       value=st.session_state.get('last_email', ''),
-                                       help="Email address for campaign notifications").strip()
+        campaign_email = st.text_input(
+            "Campaign Notification Email",
+            value=st.session_state.get('last_email', ''),
+            help="Email address for campaign notifications"
+        ).strip()
         campaign_submitted = st.form_submit_button("Start LinkedIn Outreach Campaign")
         if campaign_submitted:
             if not campaign_email or '@' not in campaign_email:
