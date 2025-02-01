@@ -128,6 +128,38 @@ security = SecurityManager()
 # ===========================
 # 2. LinkedIn Cookie Management
 # ===========================
+
+def get_chrome_binary_location():
+    # First, check if the user provided an environment variable
+    brave_binary = os.getenv("BRAVE_BINARY")
+    chrome_binary = os.getenv("CHROME_BINARY")
+    if brave_binary:
+        return brave_binary
+    if chrome_binary:
+        return chrome_binary
+
+    # List of possible binary names and default paths
+    possible_paths = [
+        "/usr/bin/google-chrome",
+        "/usr/bin/google-chrome-stable",
+        "/usr/bin/chromium-browser",
+        "/usr/bin/chromium"
+    ]
+    # Check the fixed paths first
+    for path in possible_paths:
+        if os.path.exists(path):
+            return path
+
+    # If none of the fixed paths exist, try searching in the PATH
+    possible_names = ["google-chrome", "google-chrome-stable", "chromium-browser", "chromium"]
+    for name in possible_names:
+        auto_path = shutil.which(name)
+        if auto_path:
+            return auto_path
+
+    # If we still haven't found anything, return None
+    return None
+
 def setup_chromedriver():
     try:
         from webdriver_manager.chrome import ChromeDriverManager
@@ -153,31 +185,14 @@ def get_linkedin_cookies() -> Optional[str]:
         options.add_argument("--no-sandbox")
         options.add_argument("--disable-dev-shm-usage")
         
-        # Check for environment variables for the browser binary.
-        brave_binary = os.getenv("BRAVE_BINARY")
-        chrome_binary = os.getenv("CHROME_BINARY")
-        if brave_binary:
-            options.binary_location = brave_binary
-        elif chrome_binary:
-            options.binary_location = chrome_binary
+        # Use our helper function to find the browser binary
+        binary_location = get_chrome_binary_location()
+        if not binary_location:
+            st.error("No Chrome or Brave binary found. Please set the BRAVE_BINARY or CHROME_BINARY environment variable.")
+            return None
         else:
-            # If neither is provided, try default paths
-            default_paths = ["/usr/bin/google-chrome", "/usr/bin/chromium-browser"]
-            found = False
-            for path in default_paths:
-                if os.path.exists(path):
-                    options.binary_location = path
-                    found = True
-                    break
-            # Fallback: try to find the binary using shutil.which
-            if not found:
-                auto_path = shutil.which("google-chrome") or shutil.which("chromium-browser")
-                if auto_path:
-                    options.binary_location = auto_path
-                    found = True
-            if not found:
-                st.error("No Chrome or Brave binary found. Please set the BRAVE_BINARY or CHROME_BINARY environment variable.")
-                return None
+            options.binary_location = binary_location
+            st.info(f"Using browser binary: {binary_location}")
 
         service = setup_chromedriver()
         if service is None:
@@ -222,7 +237,7 @@ def get_linkedin_cookies() -> Optional[str]:
     except Exception as e:
         st.error(f"Error retrieving cookies: {str(e)}")
         return None
-
+    
 # ===========================
 # 3. Webhook Integration
 # ===========================
