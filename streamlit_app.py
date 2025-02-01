@@ -130,34 +130,33 @@ security = SecurityManager()
 # ===========================
 
 def get_chrome_binary_location():
-    # First, check if the user provided an environment variable
-    brave_binary = os.getenv("BRAVE_BINARY")
-    chrome_binary = os.getenv("CHROME_BINARY")
-    if brave_binary:
-        return brave_binary
-    if chrome_binary:
-        return chrome_binary
-
-    # List of possible binary names and default paths
+    """
+    Attempts to find the path to the Chrome or Chromium binary.
+    Checks environment variables first, then default paths, then uses shutil.which.
+    """
+    # 1. Check environment variables
+    if os.getenv("BRAVE_BINARY"):
+        return os.getenv("BRAVE_BINARY")
+    if os.getenv("CHROME_BINARY"):
+        return os.getenv("CHROME_BINARY")
+    
+    # 2. Check common fixed paths on Linux
     possible_paths = [
         "/usr/bin/google-chrome",
         "/usr/bin/google-chrome-stable",
         "/usr/bin/chromium-browser",
         "/usr/bin/chromium"
     ]
-    # Check the fixed paths first
     for path in possible_paths:
         if os.path.exists(path):
             return path
-
-    # If none of the fixed paths exist, try searching in the PATH
-    possible_names = ["google-chrome", "google-chrome-stable", "chromium-browser", "chromium"]
-    for name in possible_names:
-        auto_path = shutil.which(name)
+    
+    # 3. Fallback: search in PATH via shutil.which
+    for binary in ["google-chrome", "google-chrome-stable", "chromium-browser", "chromium"]:
+        auto_path = shutil.which(binary)
         if auto_path:
             return auto_path
 
-    # If we still haven't found anything, return None
     return None
 
 def setup_chromedriver():
@@ -180,12 +179,14 @@ def get_linkedin_cookies() -> Optional[str]:
         from selenium.webdriver.support import expected_conditions as EC
 
         options = Options()
-        # Run in headless mode (required on Streamlit Cloud)
+        # Use headless mode and other arguments recommended for Streamlit Cloud
         options.add_argument("--headless=new")
         options.add_argument("--no-sandbox")
         options.add_argument("--disable-dev-shm-usage")
+        options.add_argument("--disable-gpu")
+        options.add_argument("--window-size=1920,1080")
         
-        # Use our helper function to find the browser binary
+        # Determine the binary location using our helper
         binary_location = get_chrome_binary_location()
         if not binary_location:
             st.error("No Chrome or Brave binary found. Please set the BRAVE_BINARY or CHROME_BINARY environment variable.")
@@ -203,7 +204,7 @@ def get_linkedin_cookies() -> Optional[str]:
         driver.get("https://www.linkedin.com/sales")
         
         try:
-            # Wait for an element on the page to load
+            # Wait until the body element is present
             WebDriverWait(driver, 30).until(
                 EC.presence_of_element_located((By.TAG_NAME, "body"))
             )
