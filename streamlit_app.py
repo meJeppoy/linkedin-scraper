@@ -151,10 +151,24 @@ def get_linkedin_cookies() -> Optional[str]:
         options.add_argument("--headless=new")
         options.add_argument("--no-sandbox")
         options.add_argument("--disable-dev-shm-usage")
-        # Optionally use a custom binary location if provided
+        
+        # Check for environment variables for the browser binary.
         brave_binary = os.getenv("BRAVE_BINARY")
+        chrome_binary = os.getenv("CHROME_BINARY")
         if brave_binary:
             options.binary_location = brave_binary
+        elif chrome_binary:
+            options.binary_location = chrome_binary
+        else:
+            # If neither is provided and we're on a POSIX (Linux) system, try default paths.
+            if os.name == "posix":
+                if os.path.exists("/usr/bin/google-chrome"):
+                    options.binary_location = "/usr/bin/google-chrome"
+                elif os.path.exists("/usr/bin/chromium-browser"):
+                    options.binary_location = "/usr/bin/chromium-browser"
+                else:
+                    st.error("No Chrome or Brave binary found. Please set the BRAVE_BINARY or CHROME_BINARY environment variable.")
+                    return None
 
         service = setup_chromedriver()
         if service is None:
