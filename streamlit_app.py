@@ -497,6 +497,26 @@ def main():
                     else:
                         st.error("❌ Reconnection failed.")
 
+    # ------------------------------------------
+    # Manual Cookie Input Option (Performance Improvement)
+    # ------------------------------------------
+    with st.expander("Manual Cookie Input (Optional)", expanded=False):
+        st.info("If automatic connection fails or you prefer to paste your cookie data manually, you can do so below. The input is masked for security.")
+        with st.form("manual_cookie_form"):
+            manual_cookie_input = st.text_input("Paste your LinkedIn session cookie", type="password", help="Your LinkedIn cookie data (in JSON format) will be masked.")
+            manual_submit = st.form_submit_button("Submit Cookie")
+            if manual_submit:
+                if not manual_cookie_input:
+                    st.error("Please paste your cookie data.")
+                else:
+                    try:
+                        cookie_data = json.loads(manual_cookie_input)
+                        st.session_state.cookie_json = json.dumps(cookie_data, indent=2)
+                        st.success("Cookie data stored successfully!")
+                        rerun()
+                    except Exception as e:
+                        st.error("Invalid cookie data. Please ensure it's a valid JSON string.")
+
     # Scraper Form
     with st.form("scraper_form"):
         search_url = st.text_input("Sales Navigator Search URL", help="Enter your Sales Navigator search URL").strip()
