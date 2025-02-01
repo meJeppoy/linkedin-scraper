@@ -8,6 +8,10 @@ import hashlib
 import time
 from cryptography.fernet import Fernet
 import os
+import logging
+
+# Configure logging to record errors (these will not be shown in the UI)
+logging.basicConfig(level=logging.ERROR)
 
 # ---------------------------
 # 1. Security Management
@@ -73,7 +77,8 @@ class SecurityManager:
             message = "Valid session" if is_valid else "Session expired"
             return is_valid, message
         except Exception as e:
-            return False, f"Invalid session token: {str(e)}"
+            logging.error(f"Error verifying session token: {str(e)}")
+            return False, "Invalid session token"
 
     def authenticate(self, username: str, password: str) -> tuple[bool, str]:
         if username not in self.users:
@@ -100,7 +105,8 @@ class SecurityManager:
                 remaining_attempts = self.MAX_ATTEMPTS - user["attempts"]
                 return False, f"Invalid username or password. {remaining_attempts} attempts remaining"
         except ValueError as e:
-            return False, str(e)
+            logging.error(f"Error in authentication: {str(e)}")
+            return False, "Authentication error"
 
 # Initialize security manager
 security = SecurityManager()
@@ -118,7 +124,7 @@ def setup_chromedriver():
         driver_path = ChromeDriverManager().install()
         return Service(driver_path)
     except Exception as e:
-        st.error(f"❌ Error setting up ChromeDriver: {str(e)}")
+        logging.error(f"Error setting up ChromeDriver: {str(e)}")
         return None
     
 def get_linkedin_cookies() -> Optional[str]:
@@ -132,16 +138,12 @@ def get_linkedin_cookies() -> Optional[str]:
         options = Options()
         options.binary_location = "C:\\Program Files\\BraveSoftware\\Brave-Browser\\Application\\brave.exe"
         
-        # Create driver and get cookies
         try:
             driver = webdriver.Chrome(options=options)
             driver.get("https://www.linkedin.com/sales")
             time.sleep(30)  # Wait for cookies to load
             
-            # Get all cookies as array
             cookies = driver.get_cookies()
-            
-            # Filter LinkedIn cookies and maintain array format
             linkedin_cookies = [
                 {
                     'name': cookie['name'],
@@ -160,15 +162,15 @@ def get_linkedin_cookies() -> Optional[str]:
             if linkedin_cookies:
                 return json.dumps(linkedin_cookies, indent=2)
             else:
-                st.warning("No LinkedIn cookies found. Please log in to LinkedIn in Brave.")
+                st.info("No LinkedIn cookies found. Please log in to LinkedIn in Brave.")
                 return None
                 
         except Exception as e:
-            st.error(f"Error with Selenium: {str(e)}")
+            logging.error(f"Error with Selenium: {str(e)}")
             return None
             
     except Exception as e:
-        st.error(f"Error retrieving cookies: {str(e)}")
+        logging.error(f"Error retrieving cookies: {str(e)}")
         return None
 
 # ---------------------------
@@ -183,21 +185,15 @@ def validate_url(url: str) -> bool:
 
 def send_to_webhook(data: Dict) -> Optional[Dict]:
     WEBHOOK_URL = "https://aliiiens.app.n8n.cloud/webhook/invoke_agent"
-    # Retrieve the BEARER_TOKEN from st.secrets (or use default)
     BEARER_TOKEN = st.secrets.get("BEARER_TOKEN", "Unicorn2025@@@")
     
-    # Add metadata for Apify tracking
     metadata = {
         "source": "linkedin_scraper",
         "requestTimestamp": datetime.utcnow().isoformat(),
         "requireApifyLogs": True
     }
     
-    # Combine the data with metadata
-    payload = {
-        **data,
-        "metadata": metadata
-    }
+    payload = {**data, "metadata": metadata}
     
     headers = {
         "Authorization": f"Bearer {BEARER_TOKEN}",
@@ -205,57 +201,42 @@ def send_to_webhook(data: Dict) -> Optional[Dict]:
     }
     
     try:
-        # Debug information
         st.write("Sending request to webhook...")
         st.write("Request URL:", WEBHOOK_URL)
         st.write("Request Headers:", {k: v for k, v in headers.items() if k != "Authorization"})
         st.write("Payload Structure:", {k: type(v).__name__ for k, v in payload.items()})
         
-        # Make the request with increased timeout
         response = requests.post(
             WEBHOOK_URL, 
             json=payload, 
             headers=headers,
-            timeout=30  # Increase timeout to 30 seconds
+            timeout=30
         )
         
-        # Debug response
         st.write("Response Status Code:", response.status_code)
         st.write("Response Headers:", dict(response.headers))
         
         try:
             response_text = response.text
             st.write("Response Content:", response_text[:500] + "..." if len(response_text) > 500 else response_text)
-        except:
-            st.write("Could not read response content")
+        except Exception as e:
+            logging.error(f"Could not read response content: {str(e)}")
             
         response.raise_for_status()
-        
         return response.json()
         
     except requests.exceptions.RequestException as e:
-        st.error(f"Error sending request: {str(e)}")
+        logging.error(f"Error sending request: {str(e)}")
         if hasattr(e, 'response') and e.response is not None:
-            st.error(f"Response Status Code: {e.response.status_code}")
-            st.error(f"Response Content: {e.response.text}")
+            logging.error(f"Response Status Code: {e.response.status_code}")
+            logging.error(f"Response Content: {e.response.text}")
         return None
     except json.JSONDecodeError as e:
-        st.error(f"Error parsing webhook response: {str(e)}")
+        logging.error(f"Error parsing webhook response: {str(e)}")
         return None
 
 def trigger_heyreach_campaign(session_id: str, email: str) -> Optional[Dict]:
-    """
-    Trigger Heyreach campaign through n8n webhook
-    
-    Args:
-        session_id (str): Unique session identifier
-        email (str): Email address for campaign notifications
-        
-    Returns:
-        Optional[Dict]: Webhook response or None if request fails
-    """
-    HEYREACH_WEBHOOK_URL = "https://aliiiens.app.n8n.cloud/webhook/heyreach_campaign"  # Replace with your actual webhook URL
-    # Retrieve the BEARER_TOKEN from st.secrets (or use default)
+    HEYREACH_WEBHOOK_URL = "https://aliiiens.app.n8n.cloud/webhook/heyreach_campaign"
     BEARER_TOKEN = st.secrets.get("BEARER_TOKEN", "Unicorn2025@@@")
     
     payload = {
@@ -275,7 +256,6 @@ def trigger_heyreach_campaign(session_id: str, email: str) -> Optional[Dict]:
     }
     
     try:
-        # Debug information
         st.write("Sending Heyreach campaign request...")
         st.write("Request URL:", HEYREACH_WEBHOOK_URL)
         st.write("Request Headers:", {k: v for k, v in headers.items() if k != "Authorization"})
@@ -288,27 +268,26 @@ def trigger_heyreach_campaign(session_id: str, email: str) -> Optional[Dict]:
             timeout=30
         )
         
-        # Debug response
         st.write("Response Status Code:", response.status_code)
         st.write("Response Headers:", dict(response.headers))
         
         try:
             response_text = response.text
             st.write("Response Content:", response_text[:500] + "..." if len(response_text) > 500 else response_text)
-        except:
-            st.write("Could not read response content")
+        except Exception as e:
+            logging.error(f"Could not read response content: {str(e)}")
             
         response.raise_for_status()
         return response.json()
         
     except requests.exceptions.RequestException as e:
-        st.error(f"Error sending Heyreach campaign request: {str(e)}")
+        logging.error(f"Error sending Heyreach campaign request: {str(e)}")
         if hasattr(e, 'response') and e.response is not None:
-            st.error(f"Response Status Code: {e.response.status_code}")
-            st.error(f"Response Content: {e.response.text}")
+            logging.error(f"Response Status Code: {e.response.status_code}")
+            logging.error(f"Response Content: {e.response.text}")
         return None
     except json.JSONDecodeError as e:
-        st.error(f"Error parsing Heyreach webhook response: {str(e)}")
+        logging.error(f"Error parsing Heyreach webhook response: {str(e)}")
         return None
 
 # ---------------------------
@@ -317,18 +296,15 @@ def trigger_heyreach_campaign(session_id: str, email: str) -> Optional[Dict]:
 
 class ApifyLogManager:
     def __init__(self):
-        self.APIFY_API_TOKEN = st.secrets["APIFY_API_TOKEN"]
-        
+        self.APIFY_API_TOKEN = st.secrets.get("APIFY_API_TOKEN")
+        if not self.APIFY_API_TOKEN:
+            logging.error("APIFY_API_TOKEN is missing in st.secrets. Apify logs will not be available.")
+
     def get_actor_logs(self, run_id: str) -> Optional[List[Dict]]:
-        """
-        Fetch logs for a specific actor run using http.client
-        
-        Args:
-            run_id (str): The ID of the actor run
-            
-        Returns:
-            Optional[List[Dict]]: List of log entries or None if request fails
-        """
+        if not self.APIFY_API_TOKEN:
+            logging.error("APIFY_API_TOKEN is missing. Cannot fetch Apify logs.")
+            return None
+
         try:
             import http.client
             conn = http.client.HTTPSConnection("api.apify.com")
@@ -342,19 +318,17 @@ class ApifyLogManager:
             response = conn.getresponse()
             
             if response.status != 200:
-                st.error(f"Error fetching logs: HTTP {response.status}")
+                logging.error(f"Error fetching logs: HTTP {response.status}")
                 return None
                 
             data = response.read()
             log_text = data.decode("utf-8")
             
-            # Parse log text into structured format
             log_entries = []
             for line in log_text.split('\n'):
                 if line.strip():
                     try:
-                        # Parse the log line
-                        parts = line.strip().split(' ', 2)  # Split into max 3 parts
+                        parts = line.strip().split(' ', 2)
                         if len(parts) >= 3:
                             timestamp = parts[0]
                             level = parts[1]
@@ -366,13 +340,13 @@ class ApifyLogManager:
                                 "message": message
                             })
                     except Exception as e:
-                        st.error(f"Error parsing log line: {str(e)}")
+                        logging.error(f"Error parsing log line: {str(e)}")
                         continue
             
             return log_entries
             
         except Exception as e:
-            st.error(f"Error fetching Apify logs: {str(e)}")
+            logging.error(f"Error fetching Apify logs: {str(e)}")
             return None
             
         finally:
@@ -380,16 +354,9 @@ class ApifyLogManager:
                 conn.close()
 
 def display_apify_logs(run_id: str):
-    """
-    Display Apify actor logs in the Streamlit UI with console-style formatting
-    
-    Args:
-        run_id (str): The ID of the actor run
-    """
     apify_manager = ApifyLogManager()
     
     with st.expander("View Apify Logs", expanded=True):
-        # Custom CSS for log display
         st.markdown("""
         <style>
             .log-timestamp { color: #666666; font-family: monospace; }
@@ -407,16 +374,13 @@ def display_apify_logs(run_id: str):
                     logs = apify_manager.get_actor_logs(run_id)
                     
                     if logs:
-                        # Create a container for logs
                         log_container = st.container()
-                        
                         with log_container:
                             for log in logs:
                                 timestamp = log.get("timestamp", "")
                                 level = log.get("level", "")
                                 message = log.get("message", "")
                                 
-                                # Format the log entry with HTML styling
                                 log_html = f"""
                                 <div style='font-family: monospace; white-space: pre; margin: 2px 0;'>
                                     <span class='log-timestamp'>{timestamp}</span> 
@@ -426,23 +390,17 @@ def display_apify_logs(run_id: str):
                                 """
                                 st.markdown(log_html, unsafe_allow_html=True)
                     else:
-                        st.warning("No logs available or error fetching logs")
+                        st.write("No logs available.")
 
 def process_webhook_response(response: Dict) -> str:
-    """
-    Process webhook response to extract Apify run ID.
-    """
     try:
         run_id = response.get("apifyRunId")
-        
         if not run_id:
-            st.warning("No Apify run ID found in webhook response. Log viewing will be unavailable.")
+            logging.error("No Apify run ID found in webhook response.")
             return ""
-            
         return str(run_id)
-        
     except Exception as e:
-        st.error(f"Error processing webhook response: {str(e)}")
+        logging.error(f"Error processing webhook response: {str(e)}")
         return ""
 
 # ---------------------------
@@ -456,7 +414,6 @@ def main():
         layout="wide"
     )
 
-    # Initialize session states with better type handling
     default_states = {
         "logged_in": False,
         "cookie_json": "",
@@ -471,16 +428,14 @@ def main():
         if key not in st.session_state:
             st.session_state[key] = default_value
 
-    # Session timeout check (30 minutes)
     if st.session_state.logged_in:
         if time.time() - st.session_state.last_activity > 1800:  # 30 minutes
-            for key in st.session_state.keys():
+            for key in list(st.session_state.keys()):
                 del st.session_state[key]
             st.warning("Session expired due to inactivity. Please log in again.")
             st.rerun()
         st.session_state.last_activity = time.time()
 
-    # Authentication Check with improved validation
     if not st.session_state.get("logged_in"):
         with st.form("login_form"):
             st.subheader("Please Log In")
@@ -510,23 +465,17 @@ def main():
                     st.error(message)
         return
 
-    # Logout Button
     if st.sidebar.button("Logout"):
-        for key in st.session_state.keys():
+        for key in list(st.session_state.keys()):
             del st.session_state[key]
         st.rerun()
         return
 
-    # Main Application Interface
     st.title("LinkedIn Sales Navigator Scraper")
     st.sidebar.info(f"Logged in as: {st.session_state.get('username', 'Unknown')}")
 
-    # ---------------------------
-    # LinkedIn Account Connection
-    # ---------------------------
     st.subheader("LinkedIn Account Connection")
     
-    # Let the user choose between automatic retrieval and manual input.
     cookie_method = st.radio(
         "Choose LinkedIn Cookie Retrieval Method",
         options=["Automatic Retrieval", "Manual Input"],
@@ -544,7 +493,6 @@ def main():
             st.session_state.cookie_json = manual_cookie
             st.success("✅ Cookie data received manually!")
     else:
-        # Center the button using columns
         col1, col2, col3 = st.columns([1, 2, 1])
         with col2:
             if not st.session_state.cookie_json:
@@ -557,7 +505,7 @@ def main():
                             time.sleep(1)
                             st.rerun()
                         else:
-                            st.error("❌ Connection failed. Please make sure you're logged into LinkedIn Sales Navigator in Brave browser.")
+                            st.info("Connection failed. Please make sure you're logged into LinkedIn Sales Navigator in Brave browser.")
             else:
                 st.success("✅ Connected to LinkedIn Sales Navigator")
                 if st.button("Reconnect Account", use_container_width=True):
@@ -569,9 +517,8 @@ def main():
                             time.sleep(1)
                             st.rerun()
                         else:
-                            st.error("❌ Reconnection failed. Please make sure you're logged into LinkedIn Sales Navigator in Brave browser.")
+                            st.info("Reconnection failed. Please make sure you're logged into LinkedIn Sales Navigator in Brave browser.")
 
-    # Scraper Form
     with st.form("scraper_form"):
         search_url = st.text_input(
             "Sales Navigator Search URL",
@@ -620,13 +567,11 @@ def main():
                 response = send_to_webhook(payload)
                 if response:
                     st.session_state.scraper_logs = response.get("scraperLogs", [])
-                    # Store Apify run ID from webhook response
                     apify_run_id = process_webhook_response(response)
                     if apify_run_id:
                         st.session_state.apify_run_id = apify_run_id
                     st.success("✅ Scraping initiated successfully!")
 
-    # Display Logs
     if st.session_state.scraper_logs:
         with st.expander("View Scraper Logs", expanded=True):
             for log in st.session_state.scraper_logs:
@@ -641,17 +586,15 @@ def main():
                 else:
                     st.info(f"{timestamp}: {message}")
 
-    # Display Apify Logs if run ID is available
     if st.session_state.get("apify_run_id"):
         display_apify_logs(st.session_state.apify_run_id)
 
-    # Heyreach Campaign Section
     st.subheader("LinkedIn Outreach Campaign")
     
     with st.form("heyreach_campaign_form"):
         email = st.text_input(
             "Campaign Notification Email",
-            value=st.session_state.get('last_email', ''),  # Use previously entered email if available
+            value=st.session_state.get('last_email', ''),
             help="Email address for campaign notifications"
         ).strip()
         
@@ -662,12 +605,12 @@ def main():
                 st.error("Please enter a valid email address.")
             else:
                 with st.spinner("Initiating Heyreach campaign..."):
-                    session_id = generate_session_id()  # Reuse the existing session ID generator
+                    session_id = generate_session_id()
                     response = trigger_heyreach_campaign(session_id, email)
                     
                     if response:
                         st.success("✅ Heyreach campaign initiated successfully!")
-                        st.session_state['last_email'] = email  # Store email for future use
+                        st.session_state['last_email'] = email
                     else:
                         st.error("❌ Failed to initiate Heyreach campaign. Please try again.")
 
