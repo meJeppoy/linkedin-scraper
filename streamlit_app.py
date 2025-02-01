@@ -10,6 +10,7 @@ from cryptography.fernet import Fernet
 import os
 from dotenv import load_dotenv
 import sys
+import shutil
 
 # Load local .env file if present (for local testing)
 load_dotenv()
@@ -160,15 +161,23 @@ def get_linkedin_cookies() -> Optional[str]:
         elif chrome_binary:
             options.binary_location = chrome_binary
         else:
-            # If neither is provided and we're on a POSIX (Linux) system, try default paths.
-            if os.name == "posix":
-                if os.path.exists("/usr/bin/google-chrome"):
-                    options.binary_location = "/usr/bin/google-chrome"
-                elif os.path.exists("/usr/bin/chromium-browser"):
-                    options.binary_location = "/usr/bin/chromium-browser"
-                else:
-                    st.error("No Chrome or Brave binary found. Please set the BRAVE_BINARY or CHROME_BINARY environment variable.")
-                    return None
+            # If neither is provided, try default paths
+            default_paths = ["/usr/bin/google-chrome", "/usr/bin/chromium-browser"]
+            found = False
+            for path in default_paths:
+                if os.path.exists(path):
+                    options.binary_location = path
+                    found = True
+                    break
+            # Fallback: try to find the binary using shutil.which
+            if not found:
+                auto_path = shutil.which("google-chrome") or shutil.which("chromium-browser")
+                if auto_path:
+                    options.binary_location = auto_path
+                    found = True
+            if not found:
+                st.error("No Chrome or Brave binary found. Please set the BRAVE_BINARY or CHROME_BINARY environment variable.")
+                return None
 
         service = setup_chromedriver()
         if service is None:
